@@ -50,7 +50,9 @@ class PDFMetadata(BaseModel):
     file: str = Field(..., description="Nama file PDF")
     file_size: Optional[int] = Field(None, description="Ukuran file dalam bytes")
     extracted_at: Optional[str] = Field(None, description="Timestamp ekstraksi")
-    relevance_score: Optional[int] = Field(None, description="Skor relevansi untuk pencarian")
+    
+class PDFMetadataWithScore(PDFMetadata):
+    relevance_score: int = Field(..., description="Skor relevansi untuk pencarian")
 
 class ExtractAllResponse(BaseModel):
     total_files: int = Field(..., description="Total file yang diproses")
@@ -63,7 +65,7 @@ class SearchResponse(BaseModel):
     keyword: str = Field(..., description="Kata kunci pencarian")
     total_files_checked: int = Field(..., description="Total file yang diperiksa")
     matches_found: int = Field(..., description="Jumlah file yang cocok")
-    results: List[PDFMetadata] = Field(..., description="Hasil pencarian")
+    results: List[PDFMetadataWithScore] = Field(..., description="Hasil pencarian")
 
 class FileInfo(BaseModel):
     filename: str = Field(..., description="Nama file")
@@ -213,8 +215,9 @@ def extract_metadata(text: str, filename: str = "") -> Dict:
             parts = clean_line.split(',')
             for part in parts:
                 part = part.strip()
-                # Check if it looks like a name (Title Case with at least 2 words)
-                if re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$', part) and len(part.split()) >= 2:
+                # Check if it looks like a name (Title Case)
+                # Accept both single names (like "Asmunin") and full names
+                if re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]*)*$', part) and len(part) > 2:
                     authors.append(part)
         
         if authors:
