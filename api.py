@@ -260,15 +260,20 @@ def extract_metadata(text: str, filename: str = "") -> Dict:
                                     break
                 break
     
-    # Extract Abstract
+    # Extract Abstract (take first one found - Indonesian or English)
     abstract_text = []
     abstract_start = None
+    abstract_found = False
     
     # Look for abstract keyword
     for i, line in enumerate(lines):
+        if abstract_found:
+            break
+            
         # Check for standalone abstract header
         if re.match(r'^(abstrak|abstract)\s*[-—:]?\s*$', line, re.IGNORECASE):
             abstract_start = i + 1
+            abstract_found = True
             break
         # Check for abstract with dash or em-dash followed by content
         elif re.match(r'^(abstrak|abstract)\s*[-—]', line, re.IGNORECASE):
@@ -277,6 +282,7 @@ def extract_metadata(text: str, filename: str = "") -> Dict:
             if abstract_content:
                 abstract_text.append(abstract_content)
             abstract_start = i + 1
+            abstract_found = True
             break
     
     if abstract_start and abstract_start < len(lines):
@@ -285,7 +291,10 @@ def extract_metadata(text: str, filename: str = "") -> Dict:
             if i < len(lines):
                 line = lines[i]
                 # Stop conditions - check for section headers or keywords
-                if re.match(r'^(kata kunci|keywords?)\s*[-—:]', line, re.IGNORECASE):
+                if re.match(r'^(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:]', line, re.IGNORECASE):
+                    break
+                # Stop at another abstract (for bilingual papers)
+                if re.match(r'^(abstrak|abstract)\s*[-—:]', line, re.IGNORECASE):
                     break
                 if re.match(r'^(pendahuluan|introduction|latar belakang|^I\.\s|^1\.\s)', line, re.IGNORECASE):
                     break
@@ -300,28 +309,40 @@ def extract_metadata(text: str, filename: str = "") -> Dict:
         full_abstract = re.sub(r'\s+', ' ', full_abstract).strip()
         metadata["abstrak"] = full_abstract
     
-    # Extract Keywords
+    # Extract Keywords (take first one found - Indonesian or English)
     keywords_section = ""
+    keywords_found = False
+    
     for i, line in enumerate(lines):
+        if keywords_found:
+            break
+            
         # Look for keywords header with various formats
-        if re.search(r'(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:.)]', line, re.IGNORECASE):
-            # Make sure it's not part of the abstract text
-            if not any(word in line.lower() for word in ['pada', 'tahun', 'dengan', 'yang', 'untuk']):
-                # Extract keywords from the same line if present
-                keywords_section = re.sub(r'^.*(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:.]\s*', '', line, flags=re.IGNORECASE)
-                # Check next 2 lines for continuation
-                for j in range(1, 3):
-                    if i + j < len(lines):
-                        next_line = lines[i + j]
-                        # Stop if we hit a new section
-                        if re.match(r'^(abstract|abstrak|pendahuluan|introduction|latar belakang|^I\.\s|^1\.\s)', next_line, re.IGNORECASE):
-                            break
-                        # Add if it looks like keywords (not a full sentence)
-                        if len(next_line) < 150 and '.' not in next_line[-1:] and not any(w in next_line.lower() for w in ['pada', 'tahun', 'dengan']):
-                            keywords_section += " " + next_line
-                break
+        # Pattern: "Kata kunci—" or "Keywords—" or "Kata kunci:" etc.
+        # Can be at start of line OR after a period (for inline keywords)
+        if re.search(r'(^|\.\s*)(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:]', line, re.IGNORECASE):
+            # Extract keywords from the same line after the separator
+            # Handle both: line starting with keywords OR keywords after a sentence
+            keywords_section = re.sub(r'^.*(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:]\s*', '', line, flags=re.IGNORECASE)
+            
+            # Check if keywords continue on next line (but not if it's a new section)
+            if i + 1 < len(lines):
+                next_line = lines[i + 1]
+                # Only add next line if it looks like keywords continuation (has commas, short)
+                # and NOT if it starts with capital letter sentence or section header
+                if (',' in next_line or len(next_line) < 100) and \
+                   not re.match(r'^(Abstract|Abstrak|Pendahuluan|Introduction|I\.|1\.|[A-Z][a-z]+ [a-z]+ [a-z]+)', next_line):
+                    # Check if line ends with period or comma to determine if it continues
+                    if keywords_section.rstrip().endswith(',') or not keywords_section.rstrip().endswith('.'):
+                        keywords_section += " " + next_line
+            
+            keywords_found = True
+            break
     
     if keywords_section:
+        # Remove any trailing period from the entire section
+        keywords_section = keywords_section.rstrip('.')
+        
         # Clean and normalize separators
         keywords_section = keywords_section.replace(";", ",")
         keywords_section = keywords_section.replace(" dan ", ", ")
@@ -331,14 +352,16 @@ def extract_metadata(text: str, filename: str = "") -> Dict:
         keywords = []
         for k in keywords_section.split(','):
             k = k.strip()
-            # Remove trailing dots
-            k = k.rstrip('.')
-            # Only keep valid keywords
-            if k and len(k) > 2 and len(k) < 100:
+            # Remove trailing dots and spaces
+            k = k.rstrip('. ')
+            # Only keep valid keywords (not too short, not too long, not sentences)
+            # Skip if it looks like a sentence (has multiple spaces indicating multiple words)
+            word_count = len(k.split())
+            if k and len(k) > 2 and len(k) < 100 and word_count <= 5:
                 keywords.append(k)
         
         if keywords:
-            metadata["kata_kunci"] = keywords[:15]  # Allow up to 15 keywords
+            metadata["kata_kunci"] = keywords[:10]  # Maximum 10 keywords
     
     return metadata
 
