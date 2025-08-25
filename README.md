@@ -89,12 +89,27 @@ curl -X POST "http://localhost:8000/upload" -F "file=@paper.pdf"
 curl http://localhost:8000/list
 ```
 
+## Struktur Project
+
+```
+pdf-extractor-api/
+├── api.py          # Main API endpoints
+├── models.py       # Pydantic response models  
+├── extractors.py   # PDF extraction logic
+├── config.py       # Configuration settings
+├── requirements.txt # Dependencies
+├── test_api.py     # Testing script
+├── README.md       # Documentation
+└── BERKAS/         # PDF storage folder
+```
+
 ## Requirements
 
 - Python 3.8+
 - FastAPI
-- PyPDF2
+- PyPDF2  
 - Uvicorn
+- Pydantic
 
 ## Troubleshooting
 
