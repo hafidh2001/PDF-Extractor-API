@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="PDF Metadata Extractor API",
-    description="API untuk ekstraksi metadata dari file PDF karya ilmiah",
+    description="API untuk ekstraksi metadata dari file PDF",
     version="1.0.0"
 )
 
@@ -41,71 +41,236 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         return ""
 
 def extract_metadata(text: str, filename: str = "") -> Dict:
-    """Extract metadata from PDF text using regex and heuristics"""
+    """Extract metadata from PDF text using improved regex and heuristics"""
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     
     metadata = {
         "judul": None,
         "penulis": None,
-        "tahun": None,
         "abstrak": None,
         "kata_kunci": []
     }
     
-    if lines:
-        for i, line in enumerate(lines[:20]):
-            if len(line) > 20 and len(line) < 200 and not any(x in line.lower() for x in ['universitas', 'fakultas', 'jurusan', 'program studi']):
-                if not metadata["judul"]:
-                    metadata["judul"] = line
-                    break
+    # Clean lines from page numbers and headers
+    cleaned_lines = []
+    for line in lines:
+        # Skip page numbers, headers, footers
+        if re.match(r'^[\d\s]+$', line):  # Only numbers
+            continue
+        if re.match(r'^Page\s+\d+', line, re.IGNORECASE):
+            continue
+        # Skip very short lines (1-2 chars)
+        if len(line) <= 2:
+            continue
+        cleaned_lines.append(line)
     
-    year_patterns = [
-        r'\b(19|20)\d{2}\b',
-        r'tahun\s*(19|20)\d{2}',
-        r'©\s*(19|20)\d{2}'
-    ]
+    lines = cleaned_lines
     
-    for pattern in year_patterns:
-        year_match = re.search(pattern, text, re.IGNORECASE)
-        if year_match:
-            metadata["tahun"] = year_match.group(0).replace("tahun", "").replace("©", "").strip()
+    # Extract Title and Authors together
+    # Look for patterns where title ends and authors begin
+    title_lines = []
+    author_lines = []
+    found_authors = False
+    
+    skip_words = ['universitas', 'fakultas', 'jurusan', 'program studi', 'issn', 'vol.', 'volume', 'jurnal', 'email', '@', 'doi:', 'http://', 'https://']
+    
+    for i, line in enumerate(lines[:50]):  # Increased range to catch more title lines
+        # Skip institutional headers and URLs
+        if any(word in line.lower() for word in skip_words):
+            continue
+        
+        # Skip lines that are clearly page numbers or headers
+        if len(line) < 5 or line.isdigit():
+            continue
+            
+        # Check if this looks like an author line - names with numbers and commas
+        # Pattern like: "Name Name1, Name2" or "Name1, Name2"
+        if re.search(r'[A-Z][a-z]+\s*\d+\s*,\s*[A-Z][a-z]+', line):
+            # Confirm it's not part of the abstract (check for narrative words)
+            if not any(word in line.lower() for word in ['pada', 'tahun', 'oleh', 'dengan', 'yang', 'abstrak']):
+                # This is definitely an author line
+                author_lines.append(line)
+                found_authors = True
+                # Check next few lines for affiliations only
+                for j in range(1, 3):
+                    if i + j < len(lines):
+                        next_line = lines[i + j]
+                        # Stop at abstract
+                        if 'abstrak' in next_line.lower() or 'abstract' in next_line.lower():
+                            break
+                        # Add affiliations
+                        if any(x in next_line.lower() for x in ['universitas', 'fakultas', 'manajemen', '@']):
+                            author_lines.append(next_line)
+                        else:
+                            break
+                continue
+        
+        # Collect title lines if we haven't found authors yet
+        if not found_authors:
+            # Skip if line is just a single number (page number)
+            if re.match(r'^\d{1,3}$', line):
+                continue
+            # Skip if line looks like date/year only
+            if re.match(r'^\d{4}$', line) or re.match(r'^[A-Z][a-z]+\s+\d{4}$', line):
+                continue
+            # This is likely part of the title
+            title_lines.append(line)
+            
+        elif found_authors:
+            # Stop collecting once we're past authors
             break
     
-    author_patterns = [
-        r'(?:oleh|by|penulis|author)[\s:]*([^\n]+)',
-        r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)$'
-    ]
+    # Process title - join all title lines
+    if title_lines:
+        # Join title lines with space
+        title_text = " ".join(title_lines)
+        # Clean up extra spaces and normalize
+        title_text = re.sub(r'\s+', ' ', title_text).strip()
+        # Remove any trailing author patterns that might have slipped in
+        title_text = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹]+$', '', title_text).strip()
+        if title_text:
+            metadata["judul"] = title_text
     
-    for pattern in author_patterns:
-        for line in lines[:30]:
-            author_match = re.search(pattern, line, re.IGNORECASE)
-            if author_match:
-                potential_author = author_match.group(1).strip()
-                if len(potential_author) > 5 and len(potential_author) < 100:
-                    metadata["penulis"] = potential_author
-                    break
-        if metadata["penulis"]:
-            break
+    # Process authors
+    if author_lines:
+        authors = []
+        for line in author_lines:
+            # Skip pure affiliation lines (start with D4, S1, etc. or contain universitas)
+            if re.match(r'^(D4|S1|S2|S3|Manajemen|Fakultas)', line) or 'universitas' in line.lower():
+                continue
+            # Skip email lines
+            if '@' in line:
+                continue
+            # Remove superscript numbers and clean
+            clean_line = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹]+', '', line)
+            clean_line = re.sub(r'\d+', '', clean_line)
+            # Split by comma and extract names
+            parts = clean_line.split(',')
+            for part in parts:
+                part = part.strip()
+                # Check if it looks like a name (Title Case with at least 2 words)
+                if re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$', part) and len(part.split()) >= 2:
+                    authors.append(part)
+        
+        if authors:
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_authors = []
+            for author in authors:
+                if author not in seen:
+                    seen.add(author)
+                    unique_authors.append(author)
+            metadata["penulis"] = ", ".join(unique_authors[:10])  # Allow up to 10 authors
     
+    # If no authors found with pattern, try alternative approach
+    if not metadata["penulis"] and metadata["judul"]:
+        # Look for lines immediately after title
+        title_found_at = -1
+        for i, line in enumerate(lines[:60]):
+            # Find where the title ends
+            if metadata["judul"][:50] in line or line in metadata["judul"]:
+                title_found_at = i
+                # Check next 5 lines for authors
+                for j in range(1, 6):
+                    if i + j < len(lines):
+                        check_line = lines[i + j]
+                        # Skip empty or very short lines
+                        if len(check_line) < 5:
+                            continue
+                        # Stop at abstract
+                        if any(x in check_line.lower() for x in ['abstrak', 'abstract']):
+                            break
+                        # Look for name patterns
+                        if re.match(r'^[A-Z][a-z]+', check_line) and '@' not in check_line:
+                            # Extract all names from the line
+                            names = re.findall(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', check_line)
+                            if names:
+                                # Filter out single words (likely not names)
+                                names = [n for n in names if ' ' in n]
+                                if names:
+                                    metadata["penulis"] = ", ".join(names[:10])
+                                    break
+                break
+    
+    # Extract Abstract
+    abstract_text = []
     abstract_start = None
+    
+    # Look for abstract keyword
     for i, line in enumerate(lines):
-        if re.search(r'\b(abstrak|abstract)\b', line, re.IGNORECASE):
+        # Check for standalone abstract header
+        if re.match(r'^(abstrak|abstract)\s*[-—:]?\s*$', line, re.IGNORECASE):
+            abstract_start = i + 1
+            break
+        # Check for abstract with dash or em-dash followed by content
+        elif re.match(r'^(abstrak|abstract)\s*[-—]', line, re.IGNORECASE):
+            # Extract content after the dash
+            abstract_content = re.sub(r'^(abstrak|abstract)\s*[-—]\s*', '', line, flags=re.IGNORECASE)
+            if abstract_content:
+                abstract_text.append(abstract_content)
             abstract_start = i + 1
             break
     
     if abstract_start and abstract_start < len(lines):
-        abstract_text = []
-        for i in range(abstract_start, min(abstract_start + 20, len(lines))):
-            if re.search(r'\b(kata kunci|keywords|pendahuluan|introduction)\b', lines[i], re.IGNORECASE):
-                break
-            abstract_text.append(lines[i])
-        if abstract_text:
-            metadata["abstrak"] = " ".join(abstract_text[:5])
+        # Collect abstract lines until we hit keywords or next section
+        for i in range(abstract_start, min(abstract_start + 100, len(lines))):  # Increased range
+            if i < len(lines):
+                line = lines[i]
+                # Stop conditions - check for section headers or keywords
+                if re.match(r'^(kata kunci|keywords?)\s*[-—:]', line, re.IGNORECASE):
+                    break
+                if re.match(r'^(pendahuluan|introduction|latar belakang|^I\.\s|^1\.\s)', line, re.IGNORECASE):
+                    break
+                # Skip very short lines unless they're part of a sentence
+                if len(line) > 5:
+                    abstract_text.append(line)
     
-    keyword_match = re.search(r'(?:kata kunci|keywords)[\s:]*([^\n]+)', text, re.IGNORECASE)
-    if keyword_match:
-        keywords = keyword_match.group(1).strip()
-        metadata["kata_kunci"] = [k.strip() for k in re.split(r'[,;]', keywords) if k.strip()][:5]
+    if abstract_text:
+        # Join and clean the abstract
+        full_abstract = " ".join(abstract_text)
+        # Remove extra spaces
+        full_abstract = re.sub(r'\s+', ' ', full_abstract).strip()
+        metadata["abstrak"] = full_abstract
+    
+    # Extract Keywords
+    keywords_section = ""
+    for i, line in enumerate(lines):
+        # Look for keywords header with various formats
+        if re.search(r'(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:.)]', line, re.IGNORECASE):
+            # Make sure it's not part of the abstract text
+            if not any(word in line.lower() for word in ['pada', 'tahun', 'dengan', 'yang', 'untuk']):
+                # Extract keywords from the same line if present
+                keywords_section = re.sub(r'^.*(kata[\s\-]?kunci|key[\s\-]?words?)\s*[-—:.]\s*', '', line, flags=re.IGNORECASE)
+                # Check next 2 lines for continuation
+                for j in range(1, 3):
+                    if i + j < len(lines):
+                        next_line = lines[i + j]
+                        # Stop if we hit a new section
+                        if re.match(r'^(abstract|abstrak|pendahuluan|introduction|latar belakang|^I\.\s|^1\.\s)', next_line, re.IGNORECASE):
+                            break
+                        # Add if it looks like keywords (not a full sentence)
+                        if len(next_line) < 150 and '.' not in next_line[-1:] and not any(w in next_line.lower() for w in ['pada', 'tahun', 'dengan']):
+                            keywords_section += " " + next_line
+                break
+    
+    if keywords_section:
+        # Clean and normalize separators
+        keywords_section = keywords_section.replace(";", ",")
+        keywords_section = keywords_section.replace(" dan ", ", ")
+        keywords_section = keywords_section.replace(" and ", ", ")
+        
+        # Split by comma and clean
+        keywords = []
+        for k in keywords_section.split(','):
+            k = k.strip()
+            # Remove trailing dots
+            k = k.rstrip('.')
+            # Only keep valid keywords
+            if k and len(k) > 2 and len(k) < 100:
+                keywords.append(k)
+        
+        if keywords:
+            metadata["kata_kunci"] = keywords[:15]  # Allow up to 15 keywords
     
     return metadata
 
