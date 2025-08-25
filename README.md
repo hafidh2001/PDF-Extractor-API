@@ -48,10 +48,30 @@ API akan berjalan di `http://localhost:8000`
 - **POST `/upload`** - Upload file PDF baru
 - **DELETE `/delete/{filename}`** - Hapus file PDF
 
-### 📚 Dokumentasi
-- **GET `/`** - Informasi API dan daftar endpoints
+### 📚 Dokumentasi Interaktif (Swagger)
+
+API dilengkapi dengan dokumentasi interaktif yang memudahkan testing:
+
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
+
+#### Cara Testing dengan Swagger:
+1. Buka http://localhost:8000/docs di browser
+2. Klik endpoint yang ingin ditest
+3. Klik tombol **"Try it out"**
+4. Isi parameter yang diperlukan
+5. Klik **"Execute"** untuk menjalankan request
+6. Lihat response di bagian bawah
+
+**Fitur Swagger:**
+- ✅ Testing langsung dari browser
+- ✅ Contoh request dan response
+- ✅ Dokumentasi parameter lengkap
+- ✅ Schema model otomatis
+- ✅ Download OpenAPI spec
+
+### 🔗 Endpoints API
+- **GET `/`** - Informasi API dan daftar endpoints
 
 ## Contoh Penggunaan
 
